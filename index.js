@@ -669,11 +669,34 @@ function decodeEntities(text) {
 }
 
 const qqBrowse = createBrowse({ rpc, cgi, trackOf, t: text => host.t(text) });
+
+async function dailyRecommendation(cards, session, generation) {
+  const chinaDay = seconds => Math.floor((seconds + 8 * 3600) / 86400);
+  const today = chinaDay(Date.now() / 1000);
+  const dailyCards = cards.filter(card => card.type === 500 && card.subtype === 510 && card.jumptype === 10014
+    && chinaDay(Number(card.time)) === today && /^[1-9]\d*$/.test(String(card.id)) && Number.isSafeInteger(Number(card.id)));
+  if (dailyCards.length !== 1 || !qqCurrentSession(session, generation)) return null;
+
+  const [card] = dailyCards;
+  const data = await qqAuthRpc("music.srfDissInfo.DissInfo", "CgiGetDiss", {
+    disstid: Number(card.id), dirid: 0, tag: 1, song_begin: 0, song_num: 50,
+  }, session);
+  if (data.code || data.subcode || !Array.isArray(data.songlist) || data.hasmore === true || Number(data.hasmore) === 1
+    || Number(data.total_song_num) > data.songlist.length) {
+    throw new Error("QQ Music: incomplete daily recommendation");
+  }
+  const tracks = data.songlist.map(trackOf).filter(track => track.id);
+  if (!tracks.length || chinaDay(Date.now() / 1000) !== today || !qqCurrentSession(session, generation)) return null;
+  const title = host.t("Daily Recommendations");
+  return { title, pageTitle: title, tracks };
+}
+
 export async function home() {
   const page = await qqBrowse.home();
   await qqKeepAlive();
   const session = qqReadSession();
   if (!session) return page;
+  const generation = signInGeneration;
   try {
     const comm = { ct: 20, cv: 13020008, qq: session.musicid, authst: session.musickey, tmeLoginType: session.loginType };
     const feed = await rpc("music.recommend.RecommendFeed", "get_recommend_feed", { direction: 0, page: 1, s_num: 0, v_cache: [] }, comm);
@@ -683,6 +706,11 @@ export async function home() {
     const playlists = cards.filter(card => card.type === 500 && card.subtype === 0 && card.jumptype === 10014 && /^[1-9]\d*$/.test(String(card.id)) && !seen.has(String(card.id)) && seen.add(String(card.id)))
       .map(card => ({ id: String(card.id), name: card.title || "", imageUrl: card.cover || "" }));
     if (playlists.length) page.sections.unshift({ title: host.t("Recommended for You"), playlists });
+    const daily = await dailyRecommendation(cards, session, generation).catch(() => {
+      console.warn("QQ Music: daily recommendation unavailable");
+      return null;
+    });
+    if (daily) page.sections.unshift(daily);
   } catch (error) {
     console.warn(`QQ Music recommendations: ${error.message}`);
   }
