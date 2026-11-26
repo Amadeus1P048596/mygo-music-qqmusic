@@ -330,6 +330,7 @@ test('home opens the current daily mix as its first section and preserves playli
 
 test('daily recommendation detail failure leaves the other home sections available', async () => {
   storage.set('qqmusic.auth.v1', { musicid: '12345', musickey: 'W_test', loginType: 1 });
+  let attempts = 0;
   respond = (_url, init) => {
     const req = JSON.parse(init.body).req_0;
     if (req.method === 'GetRecommendFeed') return response(envelope({ List: [] }));
@@ -339,9 +340,11 @@ test('daily recommendation detail failure leaves the other home sections availab
       { id: '202', type: 500, subtype: 0, jumptype: 10014, title: 'For you' },
     ] }] }] }));
     assert.equal(req.method, 'CgiGetDiss');
+    attempts++;
     return response(envelope({ songlist: [song], total_song_num: 30, hasmore: 1 }));
   };
   const result = await plugin.home();
+  assert.equal(attempts, 3);
   assert.deepEqual(result.sections.map(section => section.title), ['Recommended for You', 'Featured Playlists', 'Charts']);
 });
 

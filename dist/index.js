@@ -14948,27 +14948,42 @@ async function dailyRecommendation(cards, session3, generation) {
   const title = host.t("Daily Recommendations");
   return { title, pageTitle: title, tracks };
 }
+async function recommendationCards(session3) {
+  const comm2 = { ct: 20, cv: 13020008, qq: session3.musicid, authst: session3.musickey, tmeLoginType: session3.loginType };
+  const feed = await rpc("music.recommend.RecommendFeed", "get_recommend_feed", { direction: 0, page: 1, s_num: 0, v_cache: [] }, comm2);
+  if (feed.retcode !== 0 || !Array.isArray(feed.v_shelf)) throw new Error("QQ Music: malformed personal recommendations");
+  return feed.v_shelf.flatMap((shelf) => shelf.v_niche || []).flatMap((niche) => niche.v_card || []);
+}
+function recommendedPlaylists(cards) {
+  const seen = /* @__PURE__ */ new Set();
+  return cards.filter((card) => card.type === 500 && card.subtype === 0 && card.jumptype === 10014 && /^[1-9]\d*$/.test(String(card.id)) && !seen.has(String(card.id)) && seen.add(String(card.id))).map((card) => ({ id: String(card.id), name: card.title || "", imageUrl: card.cover || "" }));
+}
 async function home() {
   const page = await qqBrowse.home();
   await qqKeepAlive();
   const session3 = qqReadSession();
   if (!session3) return page;
   const generation = signInGeneration;
-  try {
-    const comm2 = { ct: 20, cv: 13020008, qq: session3.musicid, authst: session3.musickey, tmeLoginType: session3.loginType };
-    const feed = await rpc("music.recommend.RecommendFeed", "get_recommend_feed", { direction: 0, page: 1, s_num: 0, v_cache: [] }, comm2);
-    if (feed.retcode !== 0 || !Array.isArray(feed.v_shelf)) throw new Error("QQ Music: malformed personal recommendations");
-    const cards = feed.v_shelf.flatMap((shelf) => shelf.v_niche || []).flatMap((niche) => niche.v_card || []);
-    const seen = /* @__PURE__ */ new Set();
-    const playlists2 = cards.filter((card) => card.type === 500 && card.subtype === 0 && card.jumptype === 10014 && /^[1-9]\d*$/.test(String(card.id)) && !seen.has(String(card.id)) && seen.add(String(card.id))).map((card) => ({ id: String(card.id), name: card.title || "", imageUrl: card.cover || "" }));
-    if (playlists2.length) page.sections.unshift({ title: host.t("Recommended for You"), playlists: playlists2 });
-    const daily = await dailyRecommendation(cards, session3, generation).catch(() => {
-      console.warn("QQ Music: daily recommendation unavailable");
-      return null;
-    });
-    if (daily) page.sections.unshift(daily);
-  } catch (error) {
-    console.warn(`QQ Music recommendations: ${error.message}`);
+  let recommended;
+  for (const delay of [0, 500, 1e3]) {
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    if (!qqCurrentSession(session3, generation)) return page;
+    try {
+      const cards = await recommendationCards(session3);
+      const playlists2 = recommendedPlaylists(cards);
+      if (playlists2.length) recommended = playlists2;
+      const daily = await dailyRecommendation(cards, session3, generation);
+      if (daily) {
+        if (recommended) page.sections.unshift({ title: host.t("Recommended for You"), playlists: recommended });
+        page.sections.unshift(daily);
+        return page;
+      }
+    } catch (error) {
+      console.warn(`QQ Music recommendations: ${error.message}`);
+    }
+  }
+  if (recommended && qqCurrentSession(session3, generation)) {
+    page.sections.unshift({ title: host.t("Recommended for You"), playlists: recommended });
   }
   return page;
 }
